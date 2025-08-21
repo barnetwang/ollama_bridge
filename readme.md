@@ -93,8 +93,8 @@
         "api/v3/chat": FutureAssistAdapter  # 新增此行
     }
     ```
-
-4.  **重啟伺服器**: 重新啟動 `proxy_server.py` 即可生效。就是這麼簡單！
+4.  **設定語言模型**: 下載您的思考模型與視覺模型後，請修改`proxy_server.py`中的 Basic settings。
+5.  **重啟伺服器**: 重新啟動 `proxy_server.py` 即可生效。就是這麼簡單！
 
 ---
 ## ⚖️ 授權與感謝
@@ -197,8 +197,9 @@ Let's say you want to support a new client called "Future Assist." Just follow t
         "api/v3/chat": FutureAssistAdapter  # Add this line
     }
     ```
+4.  **Set up the language model**: After downloading your thinking model and visual model, please modify the Basic settings in proxy_server.py.
 
-4.  **Restart the Server**: Relaunch `proxy_server.py` to apply the changes. It's that simple!
+5.  **Restart the Server**: Relaunch `proxy_server.py` to apply the changes. It's that simple!
 
 ## 🙏 License & Acknowledgements
 
