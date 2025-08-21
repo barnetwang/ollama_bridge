@@ -32,6 +32,9 @@
 - **模型自訂**: 可在 `proxy_server.py` 中輕鬆更換用於思考和視覺的 Ollama 模型。
 - **流式回應**: 將最終答案以串流方式傳回客戶端，提升使用者體驗。
 
+<img width="1811" height="1040" alt="image" src="https://github.com/user-attachments/assets/361337fa-c6d2-41e9-9dfd-fa2904a6ded3" />
+
+
 ## 安裝與設定
 
 1.  **前置需求**:
@@ -135,6 +138,8 @@ This design keeps the core logic stable and clean, while making it simple and lo
   - **OpenAI-compatible clients** (like Cherry Studio) (`/v1/chat/completions`)
 - **Customizable Models**: Easily swap the thinking and vision models in `proxy_server.py`.
 - **Streaming Responses**: Streams the final answer back to the client for a better user experience.
+
+<img width="1811" height="1040" alt="image" src="https://github.com/user-attachments/assets/6c00acb1-cd02-4f60-8018-08a5dfc0c70b" />
 
 ## Installation and Setup
 
