@@ -169,35 +169,47 @@ def intelligent_proxy(subpath):
     print("\n==> [STEP 4] 請求思考模型進行角色選擇...")
     expert_list = list(EXPERT_PROMPTS.keys())
     decision_prompt = (
-        f"Analyze the following user request and select the single best expert from this list to answer it: {expert_list}\n\n"
+        f"You are a strict and efficient Chief of Staff. Your task is to assign the following user request to the MINIMUM necessary number of experts from the provided list.\n\n"
+        f"### Expert List ###\n{expert_list}\n\n"
+        f"### Decision Principles ###\n"
+        f"1.  **Single Expert Rule (Default)**: For requests that fall clearly into one domain (e.g., asking for a definition like 'What is X?', asking for a creative piece like 'Write a poem', or asking for medical advice), assign ONLY the single most relevant expert.\n"
+        f"2.  **Collaboration Rule (Exception)**: Assign multiple experts ONLY IF the request EXPLICITLY and CLEARLY blends skills from different domains. For example, a request to 'write a short story about Da Vinci surgery' clearly requires both medical accuracy ('Doctor') and narrative skill ('Writer').\n"
+        f"3.  **Fallback Rule**: If the request is a simple greeting or is too ambiguous to determine a specific domain, assign the 'Assistant'.\n\n"
+        f"### Your Task ###\n"
+        f"Analyze the following user request based on the principles above.\n\n"
         f"User Request: \"{core_question}\"\n\n"
-        f"Your response MUST be only the name of the expert."
+        f"Your output MUST BE ONLY the comma-separated list of the chosen expert names."
     )
     decision_payload = {"model": THINKING_MODEL, "prompt": decision_prompt, "stream": False}
     
-    selected_expert = "通用助手"
+    selected_expert = "Assistant"
     try:
         decision_response = requests.post(f"{OLLAMA_BASE_URL}/api/generate", json=decision_payload, timeout=60)
         decision_response.raise_for_status()
-        expert_name = decision_response.json().get("response", "").strip()
-        if expert_name in EXPERT_PROMPTS:
-            selected_expert = expert_name
-        print(f"--- [STEP 5] 模型決策: 選擇專家 -> '{selected_expert}' ---")
+        
+        response_text = decision_response.json().get("response", "").strip()
+        potential_experts = [expert.strip() for expert in response_text.split(',')]
+        
+        valid_experts = [expert for expert in potential_experts if expert in EXPERT_PROMPTS]
+        if valid_experts:
+            selected_experts = valid_experts
+
+        print(f"--- [STEP 5] 模型決策: 選擇專家團隊 -> {selected_experts} ---")
     except requests.exceptions.RequestException as e:
         print(f"!! 決策失敗: {e}. 將使用預設專家。")
+    
+    final_system_prompt = create_fused_prompt(selected_experts)
 
     if image_base64:
-        print("--> 執行路徑: 圖文處理。")
-        expert_system_prompt = EXPERT_PROMPTS[selected_expert]
-        return handle_vision_request(adapter, user_prompt, image_base64, expert_system_prompt)
+        print(f"--> 執行路徑: 圖文處理 (使用團隊: {selected_experts})。")
+        return handle_vision_request(adapter, user_prompt, image_base64, final_system_prompt)
     else:
-        print(f"\n==> [STEP 6] 執行路徑: 純文字處理 (使用 '{selected_expert}' 角色)")
+        print(f"--> 執行路徑: 純文字處理 (使用團隊: {selected_experts})。")
         final_endpoint = adapter.get_final_stream_endpoint()
         target_url = f"{OLLAMA_BASE_URL}{final_endpoint}"
-        
-        expert_system_prompt = EXPERT_PROMPTS[selected_expert]
-        
-        final_messages = [{"role": "system", "content": expert_system_prompt}]
+
+        final_messages = [{"role": "system", "content": final_system_prompt}]
+
         original_messages = client_request_json.get("messages", [])
         for msg in original_messages:
             if msg.get("role") not in ["system", "developer"]:
@@ -207,12 +219,7 @@ def intelligent_proxy(subpath):
         forward_payload['messages'] = final_messages
         forward_payload['model'] = THINKING_MODEL
         
-        # <--- Debug Log ---
-        #print("\n--- [DEBUG] 最終發送給 OLLAMA 的 PAYLOAD ---")
-        #print(json.dumps(forward_payload, indent=2, ensure_ascii=False))
-        #print("------------------------------------------")
-        
-        print(f"==> [STEP 7] 轉發到 {target_url}")
+        print(f"-> 轉發到 {target_url} (強制使用模型: {THINKING_MODEL})")
         try:
             ollama_response = requests.post(target_url, json=forward_payload, stream=True)
             ollama_response.raise_for_status()
@@ -221,6 +228,25 @@ def intelligent_proxy(subpath):
             error_info = {"error": {"name": "ResponseError", "message": f"Error forwarding: {e}", "status_code": 502}}
             return Response(json.dumps(error_info), status=502, content_type='application/json')
 
+def create_fused_prompt(selected_experts: list) -> str:
+    if not selected_experts or len(selected_experts) == 0:
+        return EXPERT_PROMPTS.get("Assistant", "You are a helpful AI assistant.")
+    
+    if len(selected_experts) == 1:
+        expert_name = selected_experts[0]
+        return EXPERT_PROMPTS.get(expert_name, EXPERT_PROMPTS["Assistant"])
+
+    fused_prompt = (
+        "You are a top-tier AI advisory team composed of multiple experts. For this response, you must embody the combined capabilities of the following experts:\n\n"
+    )
+    
+    for i, expert_name in enumerate(selected_experts):
+        expert_instruction = EXPERT_PROMPTS.get(expert_name, "")
+        fused_prompt += f"### Expert {i+1}: {expert_name}\n"
+        fused_prompt += f"{expert_instruction}\n\n"
+        
+    fused_prompt += "Please provide a comprehensive and professional response that integrates the perspectives of all the above experts."
+    return fused_prompt
 
 if __name__ == '__main__':
     print("="*60); print("  Universal Adapter Proxy Started"); print("  Listening on: http://localhost:5000"); print("="*60)
