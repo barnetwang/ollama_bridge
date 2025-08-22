@@ -1,15 +1,39 @@
+import os
 from flask import Flask, request, Response
 import requests
 import json
 import base64
 
-from adapters import ADAPTERS
+from adapters import find_adapter
 
 # --- Basic settings ---
 app = Flask(__name__)
 OLLAMA_BASE_URL = "http://localhost:11434"
 THINKING_MODEL = "gpt-oss:20b" #這邊請設定您的思考模型 | Please set up your thinking model here.
 VISION_MODEL = "gemma3:4b"     #這邊請設定您的視覺模型 | Please set up your visual model here.
+
+def load_prompts_from_directory(directory: str) -> dict:
+    prompts = {}
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    prompts_dir = os.path.join(base_dir, directory)
+
+    if not os.path.isdir(prompts_dir):
+        print(f"!! 警告: Prompt 目錄不存在: {prompts_dir}")
+        return {}
+
+    for filename in os.listdir(prompts_dir):
+        if filename.endswith(".txt"):
+            filepath = os.path.join(prompts_dir, filename)
+            prompt_name = os.path.splitext(filename)[0]
+            with open(filepath, 'r', encoding='utf-8') as f:
+                prompts[prompt_name] = f.read().strip()
+    
+    print(f"-> 成功從 '{directory}' 目錄載入 {len(prompts)} 個專家角色。")
+    return prompts
+
+EXPERT_PROMPTS = load_prompts_from_directory("prompts")
+if "通用助手" not in EXPERT_PROMPTS:
+    EXPERT_PROMPTS["通用助手"] = "你是一個樂於助人的人工智能助手。"
 
 @app.after_request
 def after_request_func(response):
@@ -22,10 +46,22 @@ def after_request_func(response):
     return response
 
 def stream_forwarder(response):
+    # debug用
+    print("\n" + "="*20 + " 開始攔截 OLLAMA 的回應流 " + "="*20)
+    chunk_count = 0
+    is_empty = True
     for chunk in response.iter_content(chunk_size=None):
+        is_empty = False
+        chunk_count += 1
+    #    print(f"--- CHUNK {chunk_count} --> {chunk.decode('utf-8', errors='ignore')}")
         yield chunk
+    
+    if is_empty:
+        print("--- 警告: OLLAMA 的回應流是空的！(沒有任何數據) ---")
+    
+    print("="*22 + f" 攔截結束 (共 {chunk_count} 個數據) " + "="*22 + "\n")
 
-def handle_vision_request(adapter, user_prompt, image_base64):
+def handle_vision_request(adapter, user_prompt, image_base64, expert_system_prompt):
     print("\n==> [執行] 進入圖文處理流程...")
     print(f"--> 步驟 2.1: 調用視覺模型 ({VISION_MODEL}) 進行描述...")
     vision_payload = {
@@ -46,7 +82,7 @@ def handle_vision_request(adapter, user_prompt, image_base64):
     new_messages = [
         {
             "role": "system",
-            "content": f"You are a helpful assistant. The user has provided an image with the following content: '{image_description}'. Now, answer the user's question based on this information."
+            "content": f"{expert_system_prompt}\n\n附註：使用者同時提供了一張圖片，其客觀內容描述如下：'{image_description}'。請結合這些信息回答用戶的問題。"
         },
         {
             "role": "user",
@@ -90,50 +126,99 @@ def intelligent_proxy(subpath):
             return Response(f"Error forwarding: {e}", status=502)
 
     client_request_json = request.get_json()
-    print(f"\n--- 接收到請求: {subpath} ---")
-    print(json.dumps(client_request_json, indent=2, ensure_ascii=False))
+    
+    is_stream_request = client_request_json.get("stream", False)
+    if not is_stream_request:
+        print(f"\n==> 檢測到非流式請求，進入通用轉發器...")
 
-    adapter_class = None
-    for path_key, adapter in ADAPTERS.items():
-        if path_key in subpath:
-            adapter_class = adapter
-            break
+        target_url = f"{OLLAMA_BASE_URL}/{subpath}"
+        try:
+            ollama_response = requests.request(
+                method=request.method, url=target_url,
+                headers={k: v for (k, v) in request.headers if k.lower() != 'host'},
+                data=request.get_data(), params=request.args, stream=False # 注意 stream=False
+            )
+            return Response(ollama_response.content, status=ollama_response.status_code, content_type=ollama_response.headers.get('content-type'))
+        except requests.exceptions.RequestException as e:
+            return Response(f"Error forwarding: {e}", status=502)
 
+    print(f"\n--- [STEP 1] 接收到【流式】請求: {subpath} ---")
+    
+    adapter_class = find_adapter(subpath)
     if not adapter_class:
         return Response(json.dumps({"error": f"Unsupported API path: {subpath}"}), status=404)
     
     adapter = adapter_class(client_request_json)
-    print(f"==> 使用適配器: {adapter.name}")
+    print(f"--- [STEP 2] 使用適配器: {adapter.name} ---")
 
     try:
-        user_prompt, image_base64 = adapter.parse()
+        user_prompt, core_question, image_base64 = adapter.parse()
+        # <--- debug 用 ---
+        #print("\n--- [DEBUG] ADAPTER PARSE RESULT ---")
+        #print(f"  - user_prompt (長度): {len(user_prompt)}")
+        #print(f"  - core_question (長度): {len(core_question)}")
+        #print(f"  - image_base64 (長度): {len(image_base64) if image_base64 else 0}")
+        #print("---------------------------------")
         if not user_prompt:
-             return Response(json.dumps({"error": "Could not parse user prompt from request."}))
+             return Response(json.dumps({"error": "Adapter parsing returned empty user_prompt."}, status=400))
     except Exception as e:
-        print(f"!! Adapter parsing failed: {e}")
         return Response(json.dumps({"error": f"Adapter parsing failed: {e}"}), status=400)
 
-    print("\n==> [決策] 正在請求思考模型進行決策...")
-    decision = "yes" if image_base64 else "no"
-    print(f"--> 基於圖片存在與否的決策是: '{decision}'")
+    print(f"--- [STEP 3] 解析出的核心問題: '{core_question[:100]}...' ---")
 
-    if "yes" in decision and image_base64:
-        return handle_vision_request(adapter, user_prompt, image_base64)
+    print("\n==> [STEP 4] 請求思考模型進行角色選擇...")
+    expert_list = list(EXPERT_PROMPTS.keys())
+    decision_prompt = (
+        f"Analyze the following user request and select the single best expert from this list to answer it: {expert_list}\n\n"
+        f"User Request: \"{core_question}\"\n\n"
+        f"Your response MUST be only the name of the expert."
+    )
+    decision_payload = {"model": THINKING_MODEL, "prompt": decision_prompt, "stream": False}
+    
+    selected_expert = "通用助手"
+    try:
+        decision_response = requests.post(f"{OLLAMA_BASE_URL}/api/generate", json=decision_payload, timeout=60)
+        decision_response.raise_for_status()
+        expert_name = decision_response.json().get("response", "").strip()
+        if expert_name in EXPERT_PROMPTS:
+            selected_expert = expert_name
+        print(f"--- [STEP 5] 模型決策: 選擇專家 -> '{selected_expert}' ---")
+    except requests.exceptions.RequestException as e:
+        print(f"!! 決策失敗: {e}. 將使用預設專家。")
+
+    if image_base64:
+        print("--> 執行路徑: 圖文處理。")
+        expert_system_prompt = EXPERT_PROMPTS[selected_expert]
+        return handle_vision_request(adapter, user_prompt, image_base64, expert_system_prompt)
     else:
-        print("==> [執行] 進入純文字轉發流程...")
+        print(f"\n==> [STEP 6] 執行路徑: 純文字處理 (使用 '{selected_expert}' 角色)")
         final_endpoint = adapter.get_final_stream_endpoint()
         target_url = f"{OLLAMA_BASE_URL}{final_endpoint}"
         
+        expert_system_prompt = EXPERT_PROMPTS[selected_expert]
+        
+        final_messages = [{"role": "system", "content": expert_system_prompt}]
+        original_messages = client_request_json.get("messages", [])
+        for msg in original_messages:
+            if msg.get("role") not in ["system", "developer"]:
+                final_messages.append(msg)
+
         forward_payload = client_request_json.copy()
+        forward_payload['messages'] = final_messages
         forward_payload['model'] = THINKING_MODEL
         
-        print(f"-> 轉發到 {target_url} (強制使用模型: {THINKING_MODEL})")
+        # <--- Debug Log ---
+        #print("\n--- [DEBUG] 最終發送給 OLLAMA 的 PAYLOAD ---")
+        #print(json.dumps(forward_payload, indent=2, ensure_ascii=False))
+        #print("------------------------------------------")
+        
+        print(f"==> [STEP 7] 轉發到 {target_url}")
         try:
             ollama_response = requests.post(target_url, json=forward_payload, stream=True)
             ollama_response.raise_for_status()
             return Response(stream_forwarder(ollama_response), status=ollama_response.status_code, content_type=ollama_response.headers.get('content-type'))
         except requests.exceptions.RequestException as e:
-            error_info = {"error": {"name": "ResponseError", "message": f"Error forwarding: {e}", "status_code": 502}, "provider": "ollama"}
+            error_info = {"error": {"name": "ResponseError", "message": f"Error forwarding: {e}", "status_code": 502}}
             return Response(json.dumps(error_info), status=502, content_type='application/json')
 
 
