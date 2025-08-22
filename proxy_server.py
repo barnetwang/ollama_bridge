@@ -182,7 +182,7 @@ def intelligent_proxy(subpath):
     )
     decision_payload = {"model": THINKING_MODEL, "prompt": decision_prompt, "stream": False}
     
-    selected_expert = "Assistant"
+    selected_experts = ["Assistant"]
     try:
         decision_response = requests.post(f"{OLLAMA_BASE_URL}/api/generate", json=decision_payload, timeout=60)
         decision_response.raise_for_status()
