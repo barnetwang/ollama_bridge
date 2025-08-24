@@ -5,12 +5,56 @@ import json
 import base64
 
 from adapters import find_adapter
+from googleapiclient.discovery import build
+
+# --- import your env (API key) ---
+from dotenv import load_dotenv
+load_dotenv()
 
 # --- Basic settings ---
 app = Flask(__name__)
 OLLAMA_BASE_URL = "http://localhost:11434"
 THINKING_MODEL = "gpt-oss:20b" #這邊請設定您的思考模型 | Please set up your thinking model here.
 VISION_MODEL = "gemma3:4b"     #這邊請設定您的視覺模型 | Please set up your visual model here.
+
+def perform_google_search(query: str, max_results: int = 3) -> str:
+    """
+    使用 Google Custom Search API 執行網路搜尋並返回格式化的結果。
+    """
+    print(f"-> [工具調用] 正在執行 Google 網路搜尋: '{query}'")
+    
+    # Please set up your Google search API at .env
+    api_key = os.environ.get('GOOGLE_API_KEY')
+    search_engine_id = os.environ.get('GOOGLE_CSE_ID')
+
+    if not api_key or not search_engine_id:
+        print("!! 錯誤: GOOGLE_API_KEY 或 GOOGLE_CSE_ID 環境變數未設定。")
+        return "Google 搜尋功能未正確設定。"
+
+    try:
+        service = build("customsearch", "v1", developerKey=api_key)
+        res = service.cse().list(
+            q=query,
+            cx=search_engine_id,
+            num=max_results
+        ).execute()
+
+        results = res.get('items', [])
+        if not results:
+            return "Google 網路搜尋沒有找到相關結果。"
+
+        formatted_results = "以下是從 Google 搜尋到的參考資料：\n\n"
+        for i, result in enumerate(results):
+            formatted_results += f"--- 參考資料 [{i+1}] ---\n"
+            formatted_results += f"標題: {result.get('title', 'N/A')}\n"
+            formatted_results += f"連結: {result.get('link', 'N/A')}\n"
+            formatted_results += f"內容摘要: {result.get('snippet', 'N/A')}\n\n"
+        
+        return formatted_results.strip()
+
+    except Exception as e:
+        print(f"!! Google 網路搜尋失敗: {e}")
+        return "Google 搜尋功能暫時出現問題。"
 
 def load_prompts_from_directory(directory: str) -> dict:
     prompts = {}
@@ -130,7 +174,6 @@ def intelligent_proxy(subpath):
     is_stream_request = client_request_json.get("stream", False)
     if not is_stream_request:
         print(f"\n==> 檢測到非流式請求，進入通用轉發器...")
-
         target_url = f"{OLLAMA_BASE_URL}/{subpath}"
         try:
             ollama_response = requests.request(
@@ -143,13 +186,12 @@ def intelligent_proxy(subpath):
             return Response(f"Error forwarding: {e}", status=502)
 
     print(f"\n--- [STEP 1] 接收到【流式】請求: {subpath} ---")
-    
     adapter_class = find_adapter(subpath)
     if not adapter_class:
         return Response(json.dumps({"error": f"Unsupported API path: {subpath}"}), status=404)
     
     adapter = adapter_class(client_request_json)
-    print(f"--- [STEP 2] 使用適配器: {adapter.name} ---")
+    print(f"==> [STEP 2] 使用適配器: {adapter.name}")
 
     try:
         user_prompt, core_question, image_base64 = adapter.parse()
@@ -160,11 +202,42 @@ def intelligent_proxy(subpath):
         #print(f"  - image_base64 (長度): {len(image_base64) if image_base64 else 0}")
         #print("---------------------------------")
         if not user_prompt:
-             return Response(json.dumps({"error": "Adapter parsing returned empty user_prompt."}, status=400))
+             return Response(json.dumps({"error": "Adapter parsing returned empty user_prompt."}), status=400)
     except Exception as e:
         return Response(json.dumps({"error": f"Adapter parsing failed: {e}"}), status=400)
 
-    print(f"--- [STEP 3] 解析出的核心問題: '{core_question[:100]}...' ---")
+    print(f"--- [STEP 3] 初始解析出的核心問題: '{core_question[:100]}...' ---")
+
+    # Please set up your WEB search keyworld
+    SEARCH_PREFIX = "@網路搜尋"
+    search_context = None
+    search_query = ""
+    # For debug ==========================================================
+    #print("\n--- [DEBUG] STARTSWITH CHECK ---")
+    #stripped_question = core_question.strip()
+    #print(f"  - core_question: [{core_question}]")
+    #print(f"  - .strip() question: [{stripped_question}]")
+    #print(f"  - SEARCH_PREFIX: [{SEARCH_PREFIX}]")
+    #print(f"  - .startswith(): {stripped_question.startswith(SEARCH_PREFIX)}")
+    #print("  - 前五個字元編碼:")
+    #for char in stripped_question[:5]:
+    #    print(f"    '{char}' -> {ord(char)}")
+    #print("---------------------------------\n")
+    # ====================================================================
+    if core_question.strip().startswith(SEARCH_PREFIX):
+        search_query = core_question.replace(SEARCH_PREFIX, "").strip()
+        search_context = perform_google_search(search_query)
+
+        final_prompt_for_llm = (
+            f"請根據以下最新的網路參考資料，清晰、有條理地回答我的問題。\n\n"
+            f"--- 網路參考資料 ---\n{search_context}\n\n"
+            f"--- 我的原始問題 ---\n'{search_query}'"
+        )       
+        user_prompt = final_prompt_for_llm
+        core_question = final_prompt_for_llm
+        image_base64 = None
+        print("--> [工具已調用] 網路搜尋完成，已構建包含上下文的新 Prompt。")
+        core_question = search_query
 
     print("\n==> [STEP 4] 請求思考模型進行角色選擇...")
     expert_list = list(EXPERT_PROMPTS.keys())
@@ -182,7 +255,7 @@ def intelligent_proxy(subpath):
     )
     decision_payload = {"model": THINKING_MODEL, "prompt": decision_prompt, "stream": False}
     
-    selected_experts = ["Assistant"]
+    selected_experts = "Assistant"
     try:
         decision_response = requests.post(f"{OLLAMA_BASE_URL}/api/generate", json=decision_payload, timeout=60)
         decision_response.raise_for_status()
@@ -198,21 +271,38 @@ def intelligent_proxy(subpath):
     except requests.exceptions.RequestException as e:
         print(f"!! 決策失敗: {e}. 將使用預設專家。")
     
+    # 6. 最終執行
     final_system_prompt = create_fused_prompt(selected_experts)
 
-    if image_base64:
+    if image_base64 and not search_context:
         print(f"--> 執行路徑: 圖文處理 (使用團隊: {selected_experts})。")
         return handle_vision_request(adapter, user_prompt, image_base64, final_system_prompt)
     else:
-        print(f"--> 執行路徑: 純文字處理 (使用團隊: {selected_experts})。")
+        print(f"--> 執行路徑: 純文字/網路搜尋處理 (使用團隊: {selected_experts})。")
         final_endpoint = adapter.get_final_stream_endpoint()
         target_url = f"{OLLAMA_BASE_URL}{final_endpoint}"
-
+        
         final_messages = [{"role": "system", "content": final_system_prompt}]
+        
+        if search_context:
+            context_message = {
+                "role": "user",
+                "content": f"Here is some context from a web search:\n\n{search_context}\n\nPlease use this information to answer my next question."
+            }
+            final_messages.append(context_message)
+            final_messages.append({"role": "assistant", "content": "Okay, I have reviewed the context. What is your question?"})
 
         original_messages = client_request_json.get("messages", [])
         for msg in original_messages:
             if msg.get("role") not in ["system", "developer"]:
+                if search_context and msg.get("role") == "user":
+                    content = msg.get("content")
+                    if isinstance(content, str):
+                        msg["content"] = content.replace(SEARCH_PREFIX, "").strip()
+                    elif isinstance(content, list):
+                        for part in content:
+                            if part.get("type") == "text":
+                                part["text"] = part.get("text", "").replace(SEARCH_PREFIX, "").strip()
                 final_messages.append(msg)
 
         forward_payload = client_request_json.copy()
