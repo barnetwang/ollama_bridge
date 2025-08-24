@@ -1,212 +1,280 @@
-# AI 代理伺服器
+# 智慧型 AI 代理伺服器 (An Intelligent AI Proxy Server)
 
-這是一個基於 Python 和 Flask 的智慧代理伺服器，專為大型語言模型（LLM）後端（如 Ollama）設計。其核心特色是採用了**通用適配器架構 (Universal Adapter Architecture)**，使其能夠輕鬆擴充以支援來自不同客戶端（如 LobeChat、Cherry Studio 等）的 API 格式。
+這是一個基於 Python 和 Flask 的智慧代理伺服器，專為大型語言模型（LLM）後端（如 Ollama）設計。它不僅僅是一個請求轉發器，而是一個**智慧、多模態、多角色的 AI 代理 (AI Agent)**。
 
-此代理伺服器能夠智慧地判斷使用者請求是否包含圖片，並自動協調一個「思考模型」和一個「視覺模型」來處理多模態請求，最終將格式化的回應串流回原始的客戶端。
+它的核心能力是**理解使用者意圖**，並**動態地組織一個虛擬專家團隊**來生成高品質的、符合情境的回答。它還能無縫處理圖文混合請求，並通過**通用適配器架構**輕鬆擴展以支援多種前端應用。
 
 ---
 
-## 架構設計
+## ✨ 主要功能 (Key Features)
 
-本專案的核心是**將「核心業務邏輯」與「API 適配邏輯」分離**。
+- **🧠 動態專家角色融合 (Dynamic Expert Persona Fusion)**:
+  能根據用戶的跨領域問題（例如「寫一篇關於達文西手術的小說」），自動選擇並融合多位專家（如 `Doctor` + `Writer`）的能力，生成兼具深度與創意的回答。
 
-1.  **核心邏輯 (Core Logic)**: 這是此專案最有價值的部分，負責處理所有與模型互動的通用任務，例如：
-    *   判斷請求是否需要圖像分析。
-    *   調用視覺模型 (`VISION_MODEL`) 來描述圖片。
-    *   組合圖片描述與使用者問題，調用思考模型 (`THINKING_MODEL`) 進行最終回答。
-    *   處理流式回應。
+- **🔧 @前綴工具調用 (Prefix-based Tool Calling)**:
+  通過簡單的 `@網路搜尋` 指令，即可觸發代理伺服器執行 Google 搜尋，將即時的網路資訊作為上下文提供給 LLM，使其能夠回答關於最新事件的問題。
 
-2.  **適配器 (Adapters)**: 針對每一個需要支援的客戶端應用程式 (AP)，都有一個專屬的適配器。每個適配器只負責兩件事：
-    *   **請求翻譯**: 將特定客戶端的 API 請求格式（“方言”）翻譯成代理伺服器內部的標準格式。
-    *   **回應翻譯**: 將代理伺服器的標準流式回應，轉換為原始客戶端期望的格式和 API 端點。
+- **🖼️ 無縫多模態處理 (Seamless Multimodal Handling)**:
+  自動識別圖片並採用「看圖說話 -> 專家思考總結」的流程，能夠將專家角色能力應用於圖文混合的問答中。
 
-這種設計使得核心邏輯保持穩定、乾淨，同時讓新增對其他客戶端的支援變得非常簡單和低風險。
+- **🔌 通用適配器架構 (Universal Adapter Architecture)**:
+  可透過在 `adapters.py` 中新增適配器，快速支援新的 API 格式，目前內建支援 **LobeChat** 和 **OpenAI 相容客戶端** (如 Cherry Studio)。
 
-## 主要功能
+- **✍️ 易於維護的 Prompt 庫 (Externalized Prompt Library)**:
+  所有專家角色的能力和行為準則都定義在 `prompts/` 資料夾下的 `.txt` 檔案中，新增或修改 AI 的角色完全無需更動程式碼。
 
-- **智慧多模態處理**: 自動識別圖片並採用「看圖說話 -> 思考總結」的流程處理圖文請求。
-- **通用適配器架構**: 可透過在 `adapters.py` 中新增適配器，快速支援新的 API 格式。
-- **客戶端支援**: 目前內建支援：
-  - **LobeChat** (`/api/chat`)
-  - **OpenAI 相容客戶端** (如 Cherry Studio) (`/v1/chat/completions`)
-- **模型自訂**: 可在 `proxy_server.py` 中輕鬆更換用於思考和視覺的 Ollama 模型。
-- **流式回應**: 將最終答案以串流方式傳回客戶端，提升使用者體驗。
+- **🚀 流式回應 (Streaming Responses)**:
+  將最終答案以串流方式傳回客戶端，提供流暢的使用者體驗。
 
-<img width="1811" height="1040" alt="image" src="https://github.com/user-attachments/assets/361337fa-c6d2-41e9-9dfd-fa2904a6ded3" />
+## 🏛️ 架構設計 (Architecture)
 
+本專案的核心是**將「核心業務邏輯」與「API 適配邏輯」徹底分離**。
 
-## 安裝與設定
+1.  **核心邏輯 (`proxy_server.py`)**: 負責所有高階智慧任務：
+    *   **意圖識別**: 判斷使用者是否想調用工具（如 `@網路搜尋`）。
+    *   **專家決策**: 調用 LLM 分析問題，決定需要哪一位或哪幾位專家來協作回答。
+    *   **Prompt 融合**: 動態地將專家 Prompt 和工具搜尋結果融合成一個強大的「元 Prompt」。
+    *   **多模態協調**: 處理圖文請求的特殊流程。
 
-1.  **前置需求**:
-    *   請確保您的系統已安裝 [Ollama](https://ollama.com/)。
-    *   下載本專案所需的模型。預設模型為：
-      ```bash
-      ollama pull gpt-oss:20b # 思考模型
-      ollama pull gemma3:4b    # 視覺模型
+2.  **適配器 (`adapters.py`)**: 針對每一個客戶端，都有一個專屬的適配器，負責：
+    *   **請求翻譯**: 將客戶端的獨特 JSON 格式翻譯成內部標準格式。
+    *   **回應端點選擇**: 告訴核心邏輯應使用哪個 API 端點 (`/api/chat` 或 `/v1/chat/completions`) 來回應，確保格式兼容。
+
+3.  **Prompt 庫 (`prompts/`)**:
+    *   以獨立 `.txt` 檔案形式存放所有專家角色的定義。
+
+## 🛠️ 安裝與設定 (Installation & Setup)
+
+#### 1. 前置需求 (Prerequisites)
+
+- **Ollama**: 請確保您的系統已安裝 [Ollama](https://ollama.com/)。
+- **Ollama 模型**: 下載本專案所需的模型。
+  ```bash
+  # 思考模型 (Thinking Model)
+  ollama pull gpt-oss:20b
+  # 視覺模型 (Vision Model)
+  ollama pull gemma3:4b
+  ```
+  *您可以在 `proxy_server.py` 的頂部修改 `THINKING_MODEL` 和 `VISION_MODEL` 變數。*
+
+#### 2. Google 搜尋 API (可選，但推薦)
+
+- 若要啟用 `@網路搜尋` 功能，您需要一個 Google Custom Search API 金鑰。
+  1.  在 [Google Cloud Console](https://console.cloud.google.com/) 啟用 "Custom Search API"。
+  2.  建立一個 **API 金鑰**。
+  3.  在 [可程式化搜尋引擎](https://programmablesearchengine.google.com/controlpanel/all) 建立一個搜尋引擎（選擇「在整個網路上搜尋」），並獲取其 **搜尋引擎 ID**。
+  4.  在專案根目錄下，建立一個 `.env` 檔案，並填入您的金鑰：
+      ```.env
+      GOOGLE_API_KEY="您的_API_金鑰"
+      GOOGLE_CSE_ID="您的_搜尋引擎_ID"
       ```
-      *您可以在 `proxy_server.py` 中修改 `THINKING_MODEL` 和 `VISION_MODEL` 變數。*
 
-2.  **安裝依賴**:
-    在專案根目錄下，透過 `requirements.txt` 安裝所需的 Python 套件。
-    ```bash
-    pip install -r requirements.txt
-    ```
+#### 3. 安裝 Python 依賴
 
-## 如何使用
+- 在專案根目錄下，建立 `requirements.txt` 檔案：
+  ```txt
+  Flask
+  requests
+  python-dotenv
+  google-api-python-client
+  ```
+- 執行安裝：
+  ```bash
+  pip install -r requirements.txt
+  ```
+
+#### 4. 建立 Prompt 庫
+
+- 在專案根目錄下，建立一個名為 `prompts` 的資料夾。
+- 在此資料夾內，建立您的專家角色檔案（檔名必須為**英文**）。例如：`Doctor.txt`, `Writer.txt`, `Assistant.txt`。
+
+## 🚀 如何使用 (How to Use)
 
 1.  **啟動代理伺服器**:
     ```bash
     python proxy_server.py
     ```
-    成功啟動後，您會看到伺服器正在 `http://localhost:5000` 上監聽。
+    伺服器將在 `http://localhost:5000` 上監聽。
 
 2.  **設定您的客戶端**:
-    將您的 AI 客戶端（如 LobeChat）的 Ollama API 位址指向此代理伺服器。
-
-    - **對於 LobeChat**:
-      - API 位址: `http://localhost:5000/api/chat`
-      - 模型名稱: `gpt-oss:20b` (或其他您在代理中設定的思考模型)
-
+    - **對於 LobeChat (推薦)**:
+      - API 端點: `http://localhost:5000`
+      - 模型名稱: `gpt-oss:20b` (或其他您設定的思考模型)
     - **對於 OpenAI 相容客戶端**:
-      - API 位址: `http://localhost:5000/v1`
+      - API Base URL: `http://localhost:5000/v1`
       - 模型名稱: `gpt-oss:20b`
 
-## 如何支援一個新的客戶端
+3.  **開始對話**:
+    - **常規問題**: 「達文西手術是什麼？」 -> 將由 `Doctor` 角色回答。
+    - **跨領域問題**: 「寫一篇關於達文西手術的小說」 -> 將由 `Doctor` 和 `Writer` 團隊協同回答。
+    - **網路搜尋**: 「@網路搜尋 特斯拉 Cybertruck 的特點」 -> 將觸發 Google 搜尋並基於即時資訊回答。
 
-假設您想支援一個名為 "Future Assist" 的新客戶端，只需遵循以下步驟：
+## 🧩 如何擴展 (How to Extend)
 
-1.  **偵錯其 API 格式**: 了解 "Future Assist" 呼叫的 API 路徑（例如 `/api/v3/chat`）以及它傳送的 JSON 結構。
+### 新增一位專家
 
-2.  **建立新適配器**: 在 `adapters.py` 檔案中，建立一個繼承自 `BaseAdapter` 的新類別。
-    ```python
-    class FutureAssistAdapter(BaseAdapter):
-        name = "future_assist"
+1.  在 `prompts` 資料夾中，新增一個 `.txt` 檔案，例如 `Historian.txt`。
+2.  在檔案內，編寫這位專家的角色定義和行為準則。
+3.  重啟代理伺服器即可！
 
-        def parse(self):
-            # 在此實現解析 "Future Assist" JSON 格式的邏輯
-            # ...
-            return user_prompt, image_base64
-    ```
+### 支援一個新的客戶端
 
-3.  **註冊新適配器**: 在 `adapters.py` 底部的 `ADAPTERS` 字典中，將新客戶端的 API 路徑關鍵字與您剛建立的適配器類別關聯起來。
-    ```python
-    ADAPTERS = {
-        "api/chat": LobeChatAdapter,
-        "v1/chat/completions": CherryStudioAdapter,
-        "api/v3/chat": FutureAssistAdapter  # 新增此行
-    }
-    ```
-4.  **設定語言模型**: 下載您的思考模型與視覺模型後，請修改`proxy_server.py`中的 Basic settings。
-5.  **重啟伺服器**: 重新啟動 `proxy_server.py` 即可生效。就是這麼簡單！
+1.  **偵錯** "Future Assist" 的 API 路徑和 JSON 結構。
+2.  在 `adapters.py` 中，為其**建立**一個新的 `FutureAssistAdapter` 類。
+3.  在 `adapters.py` 的 `ADAPTER_REGISTRY` 列表中，**註冊**這個新適配器。
+4.  重啟伺服器即可生效！
 
 ---
-## ⚖️ 授權與感謝
+## ⚖️ 授權與感謝 (License & Acknowledgements)
 
-此專案為開源項目，使用了多個第三方函式庫。
-請仔細閱讀其授權條款，在商業用途前務必審視清楚。
+此專案為開源項目，使用了多個第三方函式庫。請仔細閱讀其授權條款，在商業用途前務必審視清楚。
 
 # Adapter AI Proxy (English Version)
 
-This is an intelligent proxy server built with Python and Flask, designed for Large Language Model (LLM) backends like Ollama. Its core feature is the **Universal Adapter Architecture**, which allows it to be easily extended to support API formats from various clients (e.g., LobeChat, Cherry Studio).
+# 智慧型 AI 代理伺服器 (An Intelligent AI Proxy Server)
 
-This proxy can intelligently determine if a user's request includes an image, automatically coordinate a "thinking model" and a "vision model" to handle multimodal requests, and stream the formatted response back to the original client.
+這是一個基於 Python 和 Flask 的智慧代理伺服器，專為大型語言模型（LLM）後端（如 Ollama）設計。它不僅僅是一個請求轉發器，而是一個**智慧、多模態、多角色的 AI 代理 (AI Agent)**。
+
+它的核心能力是**理解使用者意圖**，並**動態地組織一個虛擬專家團隊**來生成高品質的、符合情境的回答。它還能無縫處理圖文混合請求，並通過**通用適配器架構**輕鬆擴展以支援多種前端應用。
+
+---
+---
+
+<br>
+
+# [ English Version ]
+
+This is an intelligent proxy server built with Python and Flask, designed for Large Language Model (LLM) backends like Ollama. It functions as an **intelligent, multimodal, multi-persona AI Agent** that goes beyond simple request forwarding.
+
+Its core capability is to **understand user intent** and **dynamically assemble a virtual team of experts** to generate high-quality, context-aware responses. It seamlessly handles mixed text-and-image requests and is easily extensible to support various front-end applications through its **Universal Adapter Architecture**.
 
 ---
 
-## Architecture
+## ✨ Key Features
 
-The core principle of this project is the **separation of "Core Logic" from "API Adaptation Logic."**
+- **🧠 Dynamic Expert Persona Fusion**:
+  Based on a user's cross-disciplinary query (e.g., "write a short story about Da Vinci surgery"), it can automatically select and fuse the capabilities of multiple experts (like `Doctor` + `Writer`) to generate a response with both depth and creativity.
 
-1.  **Core Logic**: This is the most valuable part of the project, responsible for handling all common tasks related to model interaction, such as:
-    *   Determining if a request requires image analysis.
-    *   Calling the vision model (`VISION_MODEL`) to describe an image.
-    *   Combining the image description with the user's question and calling the thinking model (`THINKING_MODEL`) for a final answer.
-    *   Handling streaming responses.
+- **🔧 Prefix-based Tool Calling**:
+  Using a simple `@web_search` command, the proxy can trigger a Google Search to provide the LLM with real-time information, enabling it to answer questions about recent events.
 
-2.  **Adapters**: For each client application (AP) you want to support, there is a dedicated adapter. Each adapter is responsible for only two things:
-    *   **Request Translation**: Translating the specific client's API request format (its "dialect") into the proxy's internal standard format.
-    *   **Response Translation**: Converting the proxy's standard streaming response back into the format and API endpoint expected by the original client.
+- **🖼️ Seamless Multimodal Handling**:
+  Automatically detects images and uses a "describe-then-think" workflow, applying the selected expert persona's skills to answer complex vision-language questions.
 
-This design keeps the core logic stable and clean, while making it simple and low-risk to add support for new clients.
+- **🔌 Universal Adapter Architecture**:
+  Quickly support new API formats by adding adapters in `adapters.py`. It comes with built-in support for **LobeChat** and **OpenAI-compatible clients** (like Cherry Studio).
 
-## Key Features
+- **✍️ Externalized & Easy-to-Maintain Prompt Library**:
+  All expert personas, including their skills and behavioral guidelines, are defined in simple `.txt` files within the `prompts/` directory. Adding or modifying the AI's roles requires no code changes.
 
-- **Intelligent Multimodal Handling**: Automatically detects images and uses a "describe-then-think" workflow for vision-language tasks.
-- **Universal Adapter Architecture**: Quickly support new API formats by adding a new adapter in `adapters.py`.
-- **Client Support**: Built-in support for:
-  - **LobeChat** (`/api/chat`)
-  - **OpenAI-compatible clients** (like Cherry Studio) (`/v1/chat/completions`)
-- **Customizable Models**: Easily swap the thinking and vision models in `proxy_server.py`.
-- **Streaming Responses**: Streams the final answer back to the client for a better user experience.
+- **🚀 Streaming Responses**:
+  Streams the final answer back to the client for a smooth, real-time user experience.
 
-<img width="1811" height="1040" alt="image" src="https://github.com/user-attachments/assets/6c00acb1-cd02-4f60-8018-08a5dfc0c70b" />
+## 🏛️ Architecture
 
-## Installation and Setup
+The core principle of this project is the **complete separation of "Core Logic" from "API Adaptation Logic."**
 
-1.  **Prerequisites**:
-    *   Ensure you have [Ollama](https://ollama.com/) installed on your system.
-    *   Pull the models required for this project. The default models are:
-      ```bash
-      ollama pull gpt-oss:20b # Thinking Model
-      ollama pull gemma3:4b    # Vision Model
+1.  **Core Logic (`proxy_server.py`)**: Handles all high-level intelligent tasks:
+    *   **Intent Recognition**: Detects if the user wants to invoke a tool (e.g., `@web_search`).
+    *   **Expert Decision**: Calls the LLM to analyze the query and decide which expert(s) are needed for the task.
+    *   **Prompt Fusion**: Dynamically combines expert prompts and tool results into a powerful "meta-prompt."
+    *   **Multimodal Coordination**: Manages the specialized workflow for text-and-image requests.
+
+2.  **Adapters (`adapters.py`)**: A dedicated adapter exists for each client, responsible for:
+    *   **Request Translation**: Translating the client's unique JSON format ("dialect") into the proxy's internal standard format.
+    *   **Response Endpoint Selection**: Informing the core logic which API endpoint (`/api/chat` or `/v1/chat/completions`) to use for the response, ensuring format compatibility.
+
+3.  **Prompt Library (`prompts/`)**:
+    *   Contains all expert persona definitions as individual `.txt` files.
+
+## 🛠️ Installation & Setup
+
+#### 1. Prerequisites
+
+- **Ollama**: Ensure you have [Ollama](https://ollama.com/) installed on your system.
+- **Ollama Models**: Pull the required models.
+  ```bash
+  # Thinking Model
+  ollama pull gpt-oss:20b
+  # Vision Model
+  ollama pull gemma3:4b
+  ```
+  *You can change the `THINKING_MODEL` and `VISION_MODEL` variables at the top of `proxy_server.py`.*
+
+#### 2. Google Search API (Optional, but recommended)
+
+- To enable the `@web_search` feature, you need a Google Custom Search API key.
+  1.  Enable "Custom Search API" in the [Google Cloud Console](https://console.cloud.google.com/).
+  2.  Create an **API Key**.
+  3.  Create a search engine in the [Programmable Search Engine](https://programmablesearchengine.google.com/controlpanel/all) console (select "Search the entire web") and get its **Search engine ID**.
+  4.  Create a `.env` file in the project root and add your credentials:
+      ```.env
+      GOOGLE_API_KEY="YOUR_API_KEY"
+      GOOGLE_CSE_ID="YOUR_SEARCH_ENGINE_ID"
       ```
-      *You can change the `THINKING_MODEL` and `VISION_MODEL` variables in `proxy_server.py`.*
 
-2.  **Install Dependencies**:
-    In the project's root directory, install the required Python packages using `requirements.txt`.
-    ```bash
-    pip install -r requirements.txt
-    ```
+#### 3. Install Python Dependencies
 
-## How to Use
+- Create a `requirements.txt` file in the project root:
+  ```txt
+  Flask
+  requests
+  python-dotenv
+  google-api-python-client
+  ```
+- Run the installation:
+  ```bash
+  pip install -r requirements.txt
+  ```
+
+#### 4. Create the Prompt Library
+
+- Create a folder named `prompts` in the project root.
+- Inside this folder, create your expert persona files with **English filenames**. For example:
+    - `prompts/Doctor.txt`
+    - `prompts/Writer.txt`
+    - `prompts/Software_Engineer.txt`
+    - `prompts/Assistant.txt` (This is the default fallback persona and is required).
+
+## 🚀 How to Use
 
 1.  **Start the Proxy Server**:
     ```bash
     python proxy_server.py
     ```
-    Once started, you will see the server listening on `http://localhost:5000`.
+    The server will be listening on `http://localhost:5000`.
 
 2.  **Configure Your Client**:
-    Point your AI client (e.g., LobeChat) to this proxy server's address.
-
-    - **For LobeChat**:
-      - API Endpoint: `http://localhost:5000/api/chat`
+    - **For LobeChat (Recommended)**:
+      - API Endpoint: `http://localhost:5000`
+      - Path: `api/chat`
       - Model Name: `gpt-oss:20b` (or your configured thinking model)
-
     - **For OpenAI-Compatible Clients**:
       - API Base URL: `http://localhost:5000/v1`
       - Model Name: `gpt-oss:20b`
 
-## How to Support a New Client
+3.  **Start Chatting**:
+    - **Normal Query**: "What is Da Vinci surgery?" -> Will be answered by the `Doctor` persona.
+    - **Cross-Disciplinary Query**: "Write a short story about Da Vinci surgery" -> Will be answered by a `Doctor` and `Writer` team.
+    - **Web Search**: "@web_search What are the features of the Tesla Cybertruck?" -> Will trigger a Google Search and answer based on real-time information.
 
-Let's say you want to support a new client called "Future Assist." Just follow these steps:
+## 🧩 How to Extend
 
-1.  **Investigate its API Format**: Find out the API path (e.g., `/api/v3/chat`) and the JSON structure that "Future Assist" sends.
+### Adding a New Expert
 
-2.  **Create a New Adapter**: In the `adapters.py` file, create a new class that inherits from `BaseAdapter`.
-    ```python
-    class FutureAssistAdapter(BaseAdapter):
-        name = "future_assist"
+This is the easiest way to extend the agent's capabilities:
+1.  Add a new `.txt` file to the `prompts` folder, e.g., `Historian.txt`.
+2.  Write the persona definition and behavioral guidelines inside the file.
+3.  Restart the proxy server. The decision-making model will now automatically consider "Historian" as a potential team member!
 
-        def parse(self):
-            # Implement the logic to parse the "Future Assist" JSON format here
-            # ...
-            return user_prompt, image_base64
-    ```
+### Supporting a New Client
 
-3.  **Register the New Adapter**: In the `ADAPTERS` dictionary at the bottom of `adapters.py`, map the new client's API path keyword to the adapter class you just created.
-    ```python
-    ADAPTERS = {
-        "api/chat": LobeChatAdapter,
-        "v1/chat/completions": CherryStudioAdapter,
-        "api/v3/chat": FutureAssistAdapter  # Add this line
-    }
-    ```
-4.  **Set up the language model**: After downloading your thinking model and visual model, please modify the Basic settings in proxy_server.py.
+1.  **Investigate** the new client's API path (e.g., `/api/v3/chat`) and JSON structure.
+2.  **Create** a new `FutureAssistAdapter` class in `adapters.py`.
+3.  **Register** this new adapter in the `ADAPTER_REGISTRY` list in `adapters.py`.
+4.  Restart the server. It's that simple!
 
-5.  **Restart the Server**: Relaunch `proxy_server.py` to apply the changes. It's that simple!
+---
+## ⚖️ License & Acknowledgements
 
-## 🙏 License & Acknowledgements
-
-This project is open-source and uses various third-party libraries.
-Please review their licenses carefully before using this code for commercial purposes.
+This is an open-source project that utilizes various third-party libraries. Please review their respective licenses carefully before using this code for commercial purposes.
