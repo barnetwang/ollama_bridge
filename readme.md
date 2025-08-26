@@ -63,20 +63,19 @@
   1.  在 [Google Cloud Console](https://console.cloud.google.com/) 啟用 "Custom Search API"。
   2.  建立一個 **API 金鑰**。
   3.  在 [可程式化搜尋引擎](https://programmablesearchengine.google.com/controlpanel/all) 建立一個搜尋引擎（選擇「在整個網路上搜尋」），並獲取其 **搜尋引擎 ID**。
-  4.  在專案根目錄下，建立一個 `.env` 檔案，並填入您的金鑰：
-      ```.env
-      GOOGLE_API_KEY="您的_API_金鑰"
-      GOOGLE_CSE_ID="您的_搜尋引擎_ID"
-      ```
+  4.  - 在專案根目錄下，建立一個 `.env` 檔案，並填入您的金鑰和配置：
+  ```.env
+  # Google Search API Keys (可選，但強烈推薦)
+  GOOGLE_API_KEY="您的_API_金鑰"
+  GOOGLE_CSE_ID="您的_搜尋引擎_ID"
+
+  # Ollama Model Configuration
+  OLLAMA_BASE_URL="http://localhost:11434"
+  THINKING_MODEL="gpt-oss:20b"
+  VISION_MODEL="gemma3:4b"
+  ```
 
 #### 3. 安裝 Python 依賴
-
-- 在專案根目錄下，建立 `requirements.txt` 檔案：
-  ```txt
-  Flask
-  requests
-  python-dotenv
-  google-api-python-client
   ```
 - 執行安裝：
   ```bash
@@ -209,19 +208,17 @@ The core principle of this project is the **complete separation of "Core Logic" 
   3.  Create a search engine in the [Programmable Search Engine](https://programmablesearchengine.google.com/controlpanel/all) console (select "Search the entire web") and get its **Search engine ID**.
   4.  Create a `.env` file in the project root and add your credentials:
       ```.env
+      # Google Search API Keys
       GOOGLE_API_KEY="YOUR_API_KEY"
       GOOGLE_CSE_ID="YOUR_SEARCH_ENGINE_ID"
-      ```
+      # Ollama Model Configuration
+      OLLAMA_BASE_URL="http://localhost:11434"
+      THINKING_MODEL="gpt-oss:20b"
+      VISION_MODEL="gemma3:4b"
+        ```.env
 
 #### 3. Install Python Dependencies
 
-- Create a `requirements.txt` file in the project root:
-  ```txt
-  Flask
-  requests
-  python-dotenv
-  google-api-python-client
-  ```
 - Run the installation:
   ```bash
   pip install -r requirements.txt
