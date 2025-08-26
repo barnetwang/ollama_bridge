@@ -1,4 +1,17 @@
-Flask
-requests
-python-dotenv
-google-api-python-client
+# Core web framework for the proxy server
+Flask==3.1.1
+
+# For making HTTP requests to Ollama and Google APIs
+requests==2.32.4
+
+# Google Custom Search API client library
+google-api-python-client==2.179.0
+
+# For reading configuration from .env files
+python-dotenv==1.1.0
+
+# For advanced web page content extraction to remove boilerplate
+trafilatura==2.0.0
+
+# A production-ready WSGI server to run the Flask app
+waitress==3.0.2
