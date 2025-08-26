@@ -1,4 +1,3 @@
-# proxy_server_final_verified.py
 import os
 from flask import Flask, request, Response
 import requests
@@ -7,17 +6,14 @@ import base64
 import threading
 from datetime import datetime, date
 
-# 導入我們的模組
 from adapters import find_adapter
 from googleapiclient.discovery import build
 from dotenv import load_dotenv
 import trafilatura
 
-# --- 初始化與載入設定 ---
 load_dotenv()
 app = Flask(__name__)
 
-# --- API 計數器的持久化與鎖 ---
 USAGE_FILE = "usage.json"
 api_usage_lock = threading.RLock()
 
@@ -58,13 +54,9 @@ def save_api_usage(usage_data):
 
 API_USAGE = load_api_usage()
 
-# --- 基礎设定 ---
 OLLAMA_BASE_URL = "http://localhost:11434"
 THINKING_MODEL = "gpt-oss:20b"
 VISION_MODEL = "gemma3:4b"
-
-# --- 外部化 Prompt 載入 ---
-
 
 def load_prompts_from_directory(directory: str) -> dict:
     prompts = {}
@@ -88,23 +80,18 @@ if "Assistant" not in EXPERT_PROMPTS:
 
 
 def generate_search_context(search_results: list[dict], question: str) -> str:
-    """
-    從結構化的搜尋結果生成一個豐富的、帶有引用標籤的上下文。
-    """
     print(f"-> [上下文生成] 正在處理 {len(search_results)} 條搜尋結果...")
     if not search_results:
         return ""
 
     final_context = "--- CONTEXTUAL SOURCES ---\n"
 
-    # --- 階段一：整合 Snippets ---
     for i, result in enumerate(search_results):
         final_context += f"[Source {i+1}]\n"
         final_context += f"Title: {result['title']}\n"
         final_context += f"URL: {result['link']}\n"
         final_context += f"Content Snippet: {result['snippet']}\n\n"
 
-    # --- 階段二：迭代式深度瀏覽 ---
     deep_browse_content = ""
     for i, result in enumerate(search_results[:3]):
         url = result.get('link')
@@ -133,7 +120,6 @@ def generate_search_context(search_results: list[dict], question: str) -> str:
                 if summary_response:
                     summary = summary_response.json().get("message", {}).get("content", "")
                     if summary:
-                        # 將總結內容附加到對應的 Source 上
                         deep_browse_content += f"[Deep Dive Summary for Source {i+1}: {title}]\n{summary}\n\n"
                         print(f"    - 成功對 {url} 進行深度總結。")
             else:
@@ -162,9 +148,6 @@ def create_fused_prompt_with_weights(selected_experts: list) -> str:
         fused_prompt += f"### Expert: {expert_name} (Influence: {weight})\n{EXPERT_PROMPTS.get(expert_name, '')}\n\n"
     return fused_prompt
 
-# --- 核心輔助函數 ---
-
-
 @app.after_request
 def after_request_func(response):
     origin = request.headers.get('Origin')
@@ -177,11 +160,9 @@ def after_request_func(response):
                              'GET,PUT,POST,DELETE,OPTIONS')
     return response
 
-
 def stream_forwarder(response):
     for chunk in response.iter_content(chunk_size=None):
         yield chunk
-
 
 def call_llm(messages: list, stream: bool = False):
     payload = {"model": THINKING_MODEL, "messages": messages, "stream": stream}
@@ -193,9 +174,6 @@ def call_llm(messages: list, stream: bool = False):
     except requests.exceptions.RequestException as e:
         print(f"!! 內部 LLM 調用失敗: {e}")
         return None
-
-# --- 工具與 Prompt 引擎 ---
-
 
 def generate_search_query(original_question: str) -> str:
     print(f"--> [查詢優化] 正在將問題轉換為搜尋關鍵字...")
@@ -215,7 +193,6 @@ def generate_search_query(original_question: str) -> str:
     except requests.exceptions.RequestException as e:
         print(f"!! [查詢優化] 失敗: {e}. 將使用原始問題進行搜尋。")
         return original_question
-
 
 def perform_google_search(query: str, max_results: int = 3) -> list[dict]:
     print(f"-> [工具調用] 正在執行 Google 網路搜尋: '{query}'")
@@ -257,7 +234,6 @@ def perform_google_search(query: str, max_results: int = 3) -> list[dict]:
         print(f"!! Google 網路搜尋失敗: {e}")
         return []
 
-
 def generate_search_context(search_results: list[dict], question: str) -> str:
     if not search_results:
         return ""
@@ -290,7 +266,6 @@ def generate_search_context(search_results: list[dict], question: str) -> str:
         final_context += "--- DEEP DIVE SUMMARIES ---\n" + deep_browse_content
     return final_context
 
-
 def is_context_relevant(context: str, original_question: str) -> bool:
     if not context:
         return False
@@ -306,9 +281,6 @@ def is_context_relevant(context: str, original_question: str) -> bool:
         return "yes" in verdict
     except requests.exceptions.RequestException:
         return False
-
-# --- 核心執行器 ---
-
 
 def handle_vision_request(adapter, user_prompt, image_base64, expert_system_prompt):
     print("\n==> [執行] 進入圖文處理流程...")
@@ -351,9 +323,6 @@ def handle_vision_request(adapter, user_prompt, image_base64, expert_system_prom
     except requests.exceptions.RequestException as e:
         print(f"!! 步驟 2.2 失敗. 調用思考模型出錯: {e}")
         return Response(json.dumps({"error": str(e)}), status=502)
-
-# --- 主路由 ---
-
 
 @app.route('/<path:subpath>', methods=['POST', 'OPTIONS'])
 def intelligent_proxy(subpath):
@@ -441,7 +410,7 @@ def intelligent_proxy(subpath):
         print(
             f"--- [STEP 5] 模型決策: 選擇專家團隊 -> {selected_experts_with_weights} ---")
     except requests.exceptions.RequestException:
-        pass  # Use default expert
+        pass
     print(f"--- [STEP 5] 模型決策: 選擇專家團隊 -> {selected_experts_with_weights} ---")
 
     if image_base64 and not search_context:
@@ -481,7 +450,6 @@ def intelligent_proxy(subpath):
 
             def generate_apology_stream():
                 if "v1/chat/completions" in adapter.get_final_stream_endpoint():
-                    # ... simplified for brevity
                     yield "data: [DONE]\n\n"
                 else:
                     yield f"{json.dumps({'message': {'content': apology_text}, 'done': True})}\n"
@@ -504,12 +472,7 @@ def intelligent_proxy(subpath):
     except requests.exceptions.RequestException as e:
         return Response(json.dumps({"error": f"Error forwarding: {e}", "status_code": 502}), status=502, content_type='application/json')
 
-# --- Dummy function for compatibility with older snippets if they are still around ---
-
-
 def create_fused_prompt_with_weights(selected_experts: list) -> str:
-    # This function is now effectively replaced by the logic in intelligent_proxy
-    # but we keep it to prevent NameErrors from any old code paths.
     if not selected_experts:
         return EXPERT_PROMPTS.get("Assistant", "")
     sorted_experts = sorted(selected_experts, key=lambda x: {
@@ -521,7 +484,6 @@ def create_fused_prompt_with_weights(selected_experts: list) -> str:
         for name, influence in sorted_experts[1:]:
             prompt += f"- {name} ({influence})\n"
     return prompt
-
 
 if __name__ == '__main__':
     print("="*60)
