@@ -384,7 +384,11 @@ def intelligent_proxy(subpath):
         logger.warning(f"AI 輔助決策失敗: {e}. 將僅使用預選專家。", exc_info=True)
         if not pre_selected_experts:
             selected_experts_with_weights = [("Assistant", "High")]
-
+    
+    if not selected_experts_with_weights:
+        logger.warning("專家團隊選擇結果為空，將指派預設的 'Assistant' 角色。")
+        selected_experts_with_weights = [("Assistant", "High")]
+    
     logger.info(
         f"--- [STEP 5] 模型決策: 選擇專家團隊 -> {selected_experts_with_weights} ---")
 
@@ -403,10 +407,11 @@ def intelligent_proxy(subpath):
     base_system_prompt = lead_expert_prompt + consultant_prompts
 
     if image_base64 and not search_context:
+        logger.info("==> [STEP 6] 路由決策: 進入【圖文處理】流程。")
         return handle_vision_request(adapter, user_prompt, image_base64, base_system_prompt)
-
-    final_messages = []
-    if search_context and original_question:
+    elif search_context and original_question:
+        logger.info("==> [STEP 6] 路由決策: 進入【網路搜尋】流程。")
+        final_messages = []
         if is_context_relevant(search_context, original_question):
             citation_instruction = (
                 "**CRITICAL INSTRUCTIONS (You must follow BOTH):**\n"
@@ -424,23 +429,39 @@ def intelligent_proxy(subpath):
             apology_text = "我進行了網路搜尋，但找到的資料似乎與您提出的問題關聯性不高..."
 
             def generate_apology_stream():
-                yield f"data: {json.dumps({'choices': [{'delta': {'content': apology_text}}]})}\n\n"
+                chunk_id = "chatcmpl-mock"
+                created_time = int(datetime.now().timestamp())
+                delta_payload = {
+                    "id": chunk_id, "object": "chat.completion.chunk", "created": created_time,
+                    "model": THINKING_MODEL, "choices": [{"index": 0, "delta": {"role": "assistant", "content": apology_text}, "finish_reason": None}]
+                }
+                yield f"data: {json.dumps(delta_payload)}\n\n"
+                done_payload = {
+                    "id": chunk_id, "object": "chat.completion.chunk", "created": created_time,
+                    "model": THINKING_MODEL, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+                }
+                yield f"data: {json.dumps(done_payload)}\n\n"
                 yield "data: [DONE]\n\n"
             return Response(generate_apology_stream(), content_type='text/event-stream')
     else:
+        logger.info("==> [STEP 6] 路由決策: 進入【標準文字】流程。")
+        final_messages = []
         final_messages.append(
             {"role": "system", "content": base_system_prompt})
         original_messages = client_request_json.get("messages", [])
         final_messages.extend([msg for msg in original_messages if msg.get(
             "role") not in ["system", "developer"]])
 
+    logger.info("==> [STEP 7] 正在組裝最終 payload 並轉發至 Ollama...")
     forward_payload = client_request_json.copy()
     forward_payload['messages'] = final_messages
     forward_payload['model'] = THINKING_MODEL
+
     try:
         ollama_response = requests.post(
             f"{OLLAMA_BASE_URL}{adapter.get_final_stream_endpoint()}", json=forward_payload, stream=True)
         ollama_response.raise_for_status()
+        logger.info("==> [STEP 8] 成功轉發請求，開始流式傳輸回應。")
         return Response(stream_forwarder(ollama_response), status=ollama_response.status_code, content_type=ollama_response.headers.get('content-type'))
     except requests.exceptions.RequestException as e:
         return create_error_response(f"最終請求轉發失敗: {e}", "forwarding_error", 502)
